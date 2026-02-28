@@ -9,9 +9,11 @@ import torch.nn as nn
 import time
 from datetime import datetime
 from sklearn.preprocessing import MinMaxScaler
+from sklearn.linear_model import LinearRegression
+from scipy.fft import fft, fftfreq
 
 # --- Page Configuration ---
-st.set_page_config(page_title="SentinAI: Industrial Intelligence", layout="wide", page_icon="🏭")
+st.set_page_config(page_title="SentinAI Pro: Spectral Intelligence", layout="wide", page_icon="⚙️")
 
 # ---------------------------------
 # 1. AI Architecture (LSTM Autoencoder)
@@ -32,10 +34,8 @@ class LSTMAutoencoder(nn.Module):
 
 @st.cache_resource
 def init_system():
-    """Initializes AI model and data scaler."""
     model = LSTMAutoencoder(12, 2)
     scaler = MinMaxScaler()
-    # Fit scaler on a broader range for stability
     scaler.fit(np.array([[0.2, 40], [1.5, 80]]))
     return model, scaler
 
@@ -49,151 +49,137 @@ if 'maintenance_logs' not in st.session_state:
     st.session_state.maintenance_logs = []
 
 with st.sidebar:
-    st.title("🏭 SentinAI Pro")
+    st.title("⚙️ SentinAI v3.0")
     st.markdown("---")
     page = st.radio("Navigation", ["🚀 Live Monitor", "📋 Maintenance Log"])
     st.markdown("---")
-    st.header("Simulation Control")
-    run_sim = st.button("▶️ Start Real-Time Stream", use_container_width=True)
-    fail_trigger = st.toggle("Simulate Bearing Wear (Anomaly)")
-    threshold = st.slider("Anomaly Threshold (%)", 1.0, 10.0, 4.5)
-    st.info("The AI detects deviations from the 'normal' physics-based sine wave patterns.")
+    run_sim = st.button("▶️ Start Ingestion", use_container_width=True)
+    fail_trigger = st.toggle("Simulate Bearing Wear")
+    threshold = st.slider("Anomaly Threshold (%)", 1.0, 15.0, 6.0)
+    
+    st.markdown("### Predictive Insights")
+    rul_slot = st.empty() 
+    st.info("The FFT panel (Tab 2) shows frequency spikes. Watch for high-frequency growth during failure simulation.")
 
 # ---------------------------------
-# 3. Live Monitor Page (Smoothed)
+# 3. Live Monitor Page
 # ---------------------------------
 if page == "🚀 Live Monitor":
-    st.header("Real-Time Asset Telemetry")
+    st.header("Digital Twin & Spectral Analysis")
     
-    # Define Layout Containers
-    tab1, tab2 = st.tabs(["📈 Live Streams", "🔬 Diagnostic Matrix"])
+    tab1, tab2 = st.tabs(["📉 Digital Twin Stream", "🔬 Spectral & Phase-Space"])
     
     with tab1:
-        col_v, col_t, col_a = st.columns(3)
+        c1, c2, c3 = st.columns(3)
+        v_met = c1.empty()
+        t_met = c2.empty()
+        a_met = c3.empty()
         chart_slot = st.empty()
     
     with tab2:
-        # matrix_slot remains, but we pre-allocate columns inside the loop for smoothness
-        matrix_slot = st.empty()
+        # FFT and Correlation layout
+        spectral_slot = st.empty()
 
     if run_sim:
-        data_log = []
-        error_log = []
+        data_log = []     
+        recon_log = []    
+        error_log = []    
         
-        # Throttling configuration for smoothness
-        # The correlation matrix will only update every X iterations
-        MATRIX_UPDATE_INTERVAL = 15 
+        UPDATE_INTERVAL = 15 # Throttling for UI smoothness
         
-        # Simulation Loop
-        for t in range(1000):
-            # 1. Physics Simulation (Normal vs. Anomaly)
-            v = 0.5 + 0.05 * np.sin(t/5) + np.random.normal(0, 0.02)
-            temp = 52 + 0.1 * np.cos(t/8) + np.random.normal(0, 0.1)
+        for t in range(1500):
+            # --- Physics Simulation ---
+            # Normal: Low frequency sine waves
+            v_base = 0.5 + 0.05 * np.sin(t/5) + np.random.normal(0, 0.01)
+            t_base = 52 + 0.1 * np.cos(t/8) + np.random.normal(0, 0.05)
             
-            if fail_trigger and t > 30:
-                creep = np.exp((t-30)/60) * 0.03
-                v += creep
-                temp += creep * 12
-                
-            data_log.append([v, temp])
+            if fail_trigger and t > 50:
+                drift = np.exp((t-50)/100) * 0.02
+                v_base += drift
+                # Adding high-frequency jitter to vibration (the 'bearing squeal')
+                v_base += 0.05 * np.sin(t*0.8) * drift 
+                t_base += drift * 15
             
-            # 2. AI Inference (Windowed)
-            if len(data_log) > 12:
-                current_vibration = data_log[-12:]
-                input_data = scaler.transform(np.array(current_vibration))
-                input_tensor = torch.tensor(input_data, dtype=torch.float32).unsqueeze(0)
+            data_log.append([v_base, t_base])
+            
+            # --- AI Inference ---
+            if len(data_log) >= 12:
+                window = np.array(data_log[-12:])
+                input_scaled = scaler.transform(window)
+                input_tensor = torch.tensor(input_scaled, dtype=torch.float32).unsqueeze(0)
                 
                 with torch.no_grad():
-                    recon = model(input_tensor)
-                    loss = criterion(recon, input_tensor).item() * 100
+                    output_tensor = model(input_tensor)
+                    loss = criterion(output_tensor, input_tensor).item() * 100
                     error_log.append(loss)
+                    last_recon = scaler.inverse_transform(output_tensor.squeeze(0).numpy())[-1]
+                    recon_log.append(last_recon)
                 
-                # --- UPDATE TAB 1 (Fast Update: Metrics & Time Series) ---
-                col_v.metric("Vibration", f"{v:.2f}g")
-                col_t.metric("Temperature", f"{temp:.1f}°C")
-                col_a.metric("Anomaly Score", f"{loss:.2f}%", 
-                           delta=f"{loss-threshold:.2f}%" if loss > threshold else None, 
-                           delta_color="inverse")
+                # --- RUL Prediction ---
+                if len(error_log) > 30:
+                    y_trend = np.array(error_log[-30:]).reshape(-1, 1)
+                    x_trend = np.arange(30).reshape(-1, 1)
+                    reg = LinearRegression().fit(x_trend, y_trend)
+                    slope = reg.coef_[0][0]
+                    if slope > 0.01:
+                        cycles_to_fail = max(0, (threshold*2.5 - loss) / slope)
+                        rul_slot.metric("Estimated Cycles to Failure", f"{int(cycles_to_fail)}")
+                    else:
+                        rul_slot.metric("System Health", "STABLE")
 
-                # Optimize time-series chart rendering by only plotting the last N points if needed
-                # For this demo, we plot everything.
+                # --- Update Metrics ---
+                v_met.metric("Vibration", f"{v_base:.2f}g")
+                t_met.metric("Temperature", f"{t_base:.1f}°C")
+                a_met.metric("AI Risk", f"{loss:.1f}%")
+
+                # --- Tab 1: Digital Twin (High Speed) ---
                 with chart_slot.container():
-                    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1)
-                    # Use a slightly faster rendering mode by using Scattergl if it was available, 
-                    # but since it's not core plotly, standard go.Scatter is used.
-                    fig.add_trace(go.Scatter(y=[d[0] for d in data_log], name="Vibration", line=dict(color='#3498DB', width=1.5)), row=1, col=1)
-                    fig.add_trace(go.Scatter(y=[d[1] for d in data_log], name="Temperature", line=dict(color='#E67E22', width=1.5)), row=1, col=1)
-                    fig.add_trace(go.Scatter(y=error_log, name="AI Risk Score", fill='tozeroy', line=dict(color='#E74C3C', width=1)), row=2, col=1)
+                    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08, row_heights=[0.7, 0.3])
+                    fig.add_trace(go.Scatter(y=[d[0] for d in data_log], name="Actual", line=dict(color='#00d1ff', width=1.5)), row=1, col=1)
+                    fig.add_trace(go.Scatter(y=[r[0] for r in recon_log], name="AI Expected", line=dict(color='rgba(255,255,255,0.3)', dash='dot')), row=1, col=1)
+                    fig.add_trace(go.Scatter(y=error_log, name="Risk", fill='tozeroy', line=dict(color='#ff4b4b')), row=2, col=1)
                     fig.add_hline(y=threshold, line_dash="dash", line_color="red", row=2, col=1)
-                    
-                    # Reducing margins helps speed up rendering slightly
-                    fig.update_layout(height=450, template="plotly_white", margin=dict(t=5, b=5, l=10, r=10), showlegend=False)
-                    st.plotly_chart(fig, use_container_width=True, key=f"stream_{t}")
+                    fig.update_layout(height=450, template="plotly_dark", margin=dict(t=5, b=5, l=10, r=10), showlegend=False)
+                    st.plotly_chart(fig, use_container_width=True, key=f"t1_{t}")
 
-                # --- UPDATE TAB 2 (Slow Update: Matrix & Phase-Space) ---
-                # This logic smoothens the matrix by throttling updates
-                if t % MATRIX_UPDATE_INTERVAL == 0:
-                    df_live = pd.DataFrame(data_log, columns=["Vibe", "Temp"])
-                    
-                    # Create container for matrix updates
-                    with matrix_slot.container():
-                        m_col1, m_col2 = st.columns(2)
+                # --- Tab 2: Spectral & Matrix (Throttled) ---
+                if t % UPDATE_INTERVAL == 0:
+                    with spectral_slot.container():
+                        m1, m2 = st.columns(2)
                         
-                        # --- Smoothed Heatmap ---
-                        # Instead of px.imshow (slow), use the more direct go.Heatmap
-                        corr_matrix = df_live.corr().values
+                        # Calculate FFT for Vibration
+                        # We take the last 128 points for a clean spectrum
+                        n_fft = 128
+                        if len(data_log) > n_fft:
+                            v_series = [d[0] for d in data_log[-n_fft:]]
+                            yf = fft(v_series)
+                            xf = fftfreq(n_fft, 1)[:n_fft//2]
+                            mag = 2.0/n_fft * np.abs(yf[0:n_fft//2])
+                            
+                            fig_fft = go.Figure(data=go.Bar(x=xf, y=mag, marker_color='#00ff9d'))
+                            fig_fft.update_layout(height=350, title="FFT (Frequency Spectrum)", template="plotly_dark", 
+                                                 xaxis_title="Frequency", yaxis_title="Magnitude", margin=dict(t=40, b=10))
+                            m1.plotly_chart(fig_fft, use_container_width=True, key=f"fft_{t}")
                         
-                        fig_corr = go.Figure(data=go.Heatmap(
-                            z=corr_matrix,
-                            x=["Vibe", "Temp"],
-                            y=["Vibe", "Temp"],
-                            colorscale='RdBu_r',
-                            zmin=-1, zmax=1,
-                            text=np.around(corr_matrix, 2), # Add text labels manually
-                            texttemplate="%{text}",
-                            showscale=False
-                        ))
-                        
-                        fig_corr.update_layout(
-                            title="Slow-Updating Correlation Matrix",
-                            height=350,
-                            margin=dict(t=40, b=10, l=10, r=10),
-                            yaxis=dict(autorange="reversed") # Standard heatmap orientation
-                        )
-                        st.plotly_chart(fig_corr, use_container_width=True, key=f"corr_{t}")
-                        
-                        # --- Smoothed Scatter ---
-                        # For smoothness, we only plot a maximum of 300 points in the scatter
-                        # to reduce Plotly's DOM load during failure simulation.
-                        scatter_data = df_live.tail(300)
-                        fig_scatter = px.scatter(scatter_data, x="Vibe", y="Temp", 
-                                                title="Phase-Space (Max 300 points)",
-                                                color_discrete_sequence=['#8E44AD'])
-                        
-                        fig_scatter.update_layout(height=350, margin=dict(t=40, b=10, l=10, r=10))
-                        st.plotly_chart(fig_scatter, use_container_width=True, key=f"scat_{t}")
+                        # Phase Space Scatter
+                        df_p = pd.DataFrame(data_log[-300:], columns=["V", "T"])
+                        fig_p = px.scatter(df_p, x="V", y="T", color_discrete_sequence=['#ffcc00'])
+                        fig_p.update_layout(height=350, title="Phase-Space Coupling", template="plotly_dark", margin=dict(t=40, b=10))
+                        m2.plotly_chart(fig_p, use_container_width=True, key=f"phase_{t}")
 
-                # 3. Critical Alert Logging
                 if loss > threshold:
-                    log_entry = {"Time": datetime.now().strftime("%H:%M:%S"), "Status": "CRITICAL", "Score": round(loss, 2)}
-                    # Prevent duplicate log spam
-                    if not st.session_state.maintenance_logs or st.session_state.maintenance_logs[-1]["Score"] != log_entry["Score"]:
-                        st.session_state.maintenance_logs.append(log_entry)
+                    st.session_state.maintenance_logs.append({"Time": datetime.now().strftime("%H:%M:%S"), "Anomaly": f"{loss:.1f}%"})
             
-            # Add a slightly longer sleep to let Streamlit catch up
-            time.sleep(0.06)
+            time.sleep(0.04)
     else:
-        st.info("System Standby. Click 'Start Real-Time Stream' to begin data ingestion.")
+        st.info("System Standby. Click 'Start Ingestion' to begin AI Digital Twin monitoring.")
 
 # ---------------------------------
-# 4. Maintenance Log Page
+# 4. Maintenance Log
 # ---------------------------------
 elif page == "📋 Maintenance Log":
-    st.header("System Event History")
+    st.header("Incident Archive")
     if st.session_state.maintenance_logs:
-        df_logs = pd.DataFrame(st.session_state.maintenance_logs)
-        st.error(f"⚠️ {len(df_logs)} Anomaly events detected in current session.")
-        st.dataframe(df_logs.iloc[::-1], use_container_width=True) # Show newest first
-        st.download_button("Export Incident Report", df_logs.to_csv(index=False), "maintenance_report.csv")
+        st.dataframe(pd.DataFrame(st.session_state.maintenance_logs).iloc[::-1], use_container_width=True)
     else:
-        st.success("All systems nominal. No anomalies detected.")
+        st.success("No anomalies detected in the current cycle.")
