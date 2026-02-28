@@ -60,7 +60,7 @@ with st.sidebar:
     st.info("The AI detects deviations from the 'normal' physics-based sine wave patterns.")
 
 # ---------------------------------
-# 3. Live Monitor Page (With Multi-Tab Updates)
+# 3. Live Monitor Page (Smoothed)
 # ---------------------------------
 if page == "🚀 Live Monitor":
     st.header("Real-Time Asset Telemetry")
@@ -73,11 +73,16 @@ if page == "🚀 Live Monitor":
         chart_slot = st.empty()
     
     with tab2:
+        # matrix_slot remains, but we pre-allocate columns inside the loop for smoothness
         matrix_slot = st.empty()
 
     if run_sim:
         data_log = []
         error_log = []
+        
+        # Throttling configuration for smoothness
+        # The correlation matrix will only update every X iterations
+        MATRIX_UPDATE_INTERVAL = 15 
         
         # Simulation Loop
         for t in range(1000):
@@ -94,7 +99,8 @@ if page == "🚀 Live Monitor":
             
             # 2. AI Inference (Windowed)
             if len(data_log) > 12:
-                input_data = scaler.transform(np.array(data_log[-12:]))
+                current_vibration = data_log[-12:]
+                input_data = scaler.transform(np.array(current_vibration))
                 input_tensor = torch.tensor(input_data, dtype=torch.float32).unsqueeze(0)
                 
                 with torch.no_grad():
@@ -102,39 +108,69 @@ if page == "🚀 Live Monitor":
                     loss = criterion(recon, input_tensor).item() * 100
                     error_log.append(loss)
                 
-                # --- UPDATE TAB 1: Metrics & Charts ---
+                # --- UPDATE TAB 1 (Fast Update: Metrics & Time Series) ---
                 col_v.metric("Vibration", f"{v:.2f}g")
                 col_t.metric("Temperature", f"{temp:.1f}°C")
                 col_a.metric("Anomaly Score", f"{loss:.2f}%", 
                            delta=f"{loss-threshold:.2f}%" if loss > threshold else None, 
                            delta_color="inverse")
 
+                # Optimize time-series chart rendering by only plotting the last N points if needed
+                # For this demo, we plot everything.
                 with chart_slot.container():
                     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1)
-                    fig.add_trace(go.Scatter(y=[d[0] for d in data_log], name="Vibration", line=dict(color='#3498DB', width=2)), row=1, col=1)
-                    fig.add_trace(go.Scatter(y=[d[1] for d in data_log], name="Temperature", line=dict(color='#E67E22', width=2)), row=1, col=1)
-                    fig.add_trace(go.Scatter(y=error_log, name="AI Risk Score", fill='tozeroy', line=dict(color='#E74C3C')), row=2, col=1)
+                    # Use a slightly faster rendering mode by using Scattergl if it was available, 
+                    # but since it's not core plotly, standard go.Scatter is used.
+                    fig.add_trace(go.Scatter(y=[d[0] for d in data_log], name="Vibration", line=dict(color='#3498DB', width=1.5)), row=1, col=1)
+                    fig.add_trace(go.Scatter(y=[d[1] for d in data_log], name="Temperature", line=dict(color='#E67E22', width=1.5)), row=1, col=1)
+                    fig.add_trace(go.Scatter(y=error_log, name="AI Risk Score", fill='tozeroy', line=dict(color='#E74C3C', width=1)), row=2, col=1)
                     fig.add_hline(y=threshold, line_dash="dash", line_color="red", row=2, col=1)
-                    fig.update_layout(height=450, template="plotly_white", margin=dict(t=10, b=10), showlegend=False)
+                    
+                    # Reducing margins helps speed up rendering slightly
+                    fig.update_layout(height=450, template="plotly_white", margin=dict(t=5, b=5, l=10, r=10), showlegend=False)
                     st.plotly_chart(fig, use_container_width=True, key=f"stream_{t}")
 
-                # --- UPDATE TAB 2: Live Matrix & Phase-Space ---
-                with matrix_slot.container():
-                    df_live = pd.DataFrame(data_log, columns=["Vibration", "Temperature"])
-                    m_col1, m_col2 = st.columns(2)
+                # --- UPDATE TAB 2 (Slow Update: Matrix & Phase-Space) ---
+                # This logic smoothens the matrix by throttling updates
+                if t % MATRIX_UPDATE_INTERVAL == 0:
+                    df_live = pd.DataFrame(data_log, columns=["Vibe", "Temp"])
                     
-                    with m_col1:
-                        # Heatmap for Correlation
-                        fig_corr = px.imshow(df_live.corr(), text_auto=".2f", 
-                                            color_continuous_scale='RdBu_r', 
-                                            title="Real-Time Feature Correlation")
+                    # Create container for matrix updates
+                    with matrix_slot.container():
+                        m_col1, m_col2 = st.columns(2)
+                        
+                        # --- Smoothed Heatmap ---
+                        # Instead of px.imshow (slow), use the more direct go.Heatmap
+                        corr_matrix = df_live.corr().values
+                        
+                        fig_corr = go.Figure(data=go.Heatmap(
+                            z=corr_matrix,
+                            x=["Vibe", "Temp"],
+                            y=["Vibe", "Temp"],
+                            colorscale='RdBu_r',
+                            zmin=-1, zmax=1,
+                            text=np.around(corr_matrix, 2), # Add text labels manually
+                            texttemplate="%{text}",
+                            showscale=False
+                        ))
+                        
+                        fig_corr.update_layout(
+                            title="Slow-Updating Correlation Matrix",
+                            height=350,
+                            margin=dict(t=40, b=10, l=10, r=10),
+                            yaxis=dict(autorange="reversed") # Standard heatmap orientation
+                        )
                         st.plotly_chart(fig_corr, use_container_width=True, key=f"corr_{t}")
-                    
-                    with m_col2:
-                        # Phase Space Scatter (Visualizing Failure Clusters)
-                        fig_scatter = px.scatter(df_live, x="Vibration", y="Temperature", 
-                                                title="Vibration vs. Temperature Phase-Space",
+                        
+                        # --- Smoothed Scatter ---
+                        # For smoothness, we only plot a maximum of 300 points in the scatter
+                        # to reduce Plotly's DOM load during failure simulation.
+                        scatter_data = df_live.tail(300)
+                        fig_scatter = px.scatter(scatter_data, x="Vibe", y="Temp", 
+                                                title="Phase-Space (Max 300 points)",
                                                 color_discrete_sequence=['#8E44AD'])
+                        
+                        fig_scatter.update_layout(height=350, margin=dict(t=40, b=10, l=10, r=10))
                         st.plotly_chart(fig_scatter, use_container_width=True, key=f"scat_{t}")
 
                 # 3. Critical Alert Logging
@@ -144,7 +180,8 @@ if page == "🚀 Live Monitor":
                     if not st.session_state.maintenance_logs or st.session_state.maintenance_logs[-1]["Score"] != log_entry["Score"]:
                         st.session_state.maintenance_logs.append(log_entry)
             
-            time.sleep(0.05)
+            # Add a slightly longer sleep to let Streamlit catch up
+            time.sleep(0.06)
     else:
         st.info("System Standby. Click 'Start Real-Time Stream' to begin data ingestion.")
 
