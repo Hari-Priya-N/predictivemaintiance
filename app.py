@@ -13,7 +13,7 @@ from sklearn.linear_model import LinearRegression
 from scipy.fft import fft, fftfreq
 
 # --- Page Configuration ---
-st.set_page_config(page_title="SentinAI Pro: Spectral Intelligence", layout="wide", page_icon="⚙️")
+st.set_page_config(page_title="SentinAI Pro: Fragmented Intelligence", layout="wide", page_icon="⚙️")
 
 # ---------------------------------
 # 1. AI Architecture (LSTM Autoencoder)
@@ -45,59 +45,64 @@ def init_system():
 model, scaler = init_system()
 criterion = nn.MSELoss()
 
+# Initialize session state for persistence across fragments
 if 'maintenance_logs' not in st.session_state:
     st.session_state.maintenance_logs = []
+if 'run_sim' not in st.session_state:
+    st.session_state.run_sim = False
 
 with st.sidebar:
-    st.title("⚙️ SentinAI v3.0")
+    st.title("⚙️ SentinAI v3.1")
     st.markdown("---")
     page = st.radio("Navigation", ["🚀 Live Monitor", "📋 Maintenance Log"])
     st.markdown("---")
-    run_sim = st.button("▶️ Start Ingestion", use_container_width=True)
+    
+    # Using session state for the button to keep it active during navigation
+    if st.button("▶️ Start / Reset Stream", use_container_width=True):
+        st.session_state.run_sim = True
+        st.session_state.maintenance_logs = [] # Clear logs on new run
+    
+    if st.button("🛑 Stop Stream", use_container_width=True):
+        st.session_state.run_sim = False
+        
     fail_trigger = st.toggle("Simulate Bearing Wear")
     threshold = st.slider("Anomaly Threshold (%)", 1.0, 15.0, 6.0)
-    
-    st.markdown("### Predictive Insights")
-    rul_slot = st.empty() 
-    st.info("The FFT panel (Tab 2) shows frequency spikes. Watch for high-frequency growth during failure simulation.")
 
 # ---------------------------------
-# 3. Live Monitor Page
+# 3. Fragmented Simulation Logic
 # ---------------------------------
-if page == "🚀 Live Monitor":
+
+@st.fragment
+def run_live_monitor():
+    """This fragment runs the simulation without locking the rest of the UI."""
     st.header("Digital Twin & Spectral Analysis")
     
     tab1, tab2 = st.tabs(["📉 Digital Twin Stream", "🔬 Spectral & Phase-Space"])
     
     with tab1:
         c1, c2, c3 = st.columns(3)
-        v_met = c1.empty()
-        t_met = c2.empty()
-        a_met = c3.empty()
+        v_met, t_met, a_met = c1.empty(), c2.empty(), c3.empty()
         chart_slot = st.empty()
     
     with tab2:
-        # FFT and Correlation layout
         spectral_slot = st.empty()
 
-    if run_sim:
-        data_log = []     
-        recon_log = []    
-        error_log = []    
+    if st.session_state.run_sim:
+        data_log, recon_log, error_log = [], [], []
+        UPDATE_INTERVAL = 15 
         
-        UPDATE_INTERVAL = 15 # Throttling for UI smoothness
-        
-        for t in range(1500):
+        for t in range(2000):
+            # If user stops via sidebar, break the loop
+            if not st.session_state.run_sim:
+                break
+                
             # --- Physics Simulation ---
-            # Normal: Low frequency sine waves
             v_base = 0.5 + 0.05 * np.sin(t/5) + np.random.normal(0, 0.01)
             t_base = 52 + 0.1 * np.cos(t/8) + np.random.normal(0, 0.05)
             
             if fail_trigger and t > 50:
-                drift = np.exp((t-50)/100) * 0.02
-                v_base += drift
-                # Adding high-frequency jitter to vibration (the 'bearing squeal')
-                v_base += 0.05 * np.sin(t*0.8) * drift 
+                drift = np.exp((t-50)/150) * 0.02
+                v_base += drift + (0.05 * np.sin(t*0.8) * drift)
                 t_base += drift * 15
             
             data_log.append([v_base, t_base])
@@ -115,71 +120,66 @@ if page == "🚀 Live Monitor":
                     last_recon = scaler.inverse_transform(output_tensor.squeeze(0).numpy())[-1]
                     recon_log.append(last_recon)
                 
-                # --- RUL Prediction ---
-                if len(error_log) > 30:
-                    y_trend = np.array(error_log[-30:]).reshape(-1, 1)
-                    x_trend = np.arange(30).reshape(-1, 1)
-                    reg = LinearRegression().fit(x_trend, y_trend)
-                    slope = reg.coef_[0][0]
-                    if slope > 0.01:
-                        cycles_to_fail = max(0, (threshold*2.5 - loss) / slope)
-                        rul_slot.metric("Estimated Cycles to Failure", f"{int(cycles_to_fail)}")
-                    else:
-                        rul_slot.metric("System Health", "STABLE")
-
-                # --- Update Metrics ---
+                # --- Update Dashboard UI ---
                 v_met.metric("Vibration", f"{v_base:.2f}g")
                 t_met.metric("Temperature", f"{t_base:.1f}°C")
                 a_met.metric("AI Risk", f"{loss:.1f}%")
 
-                # --- Tab 1: Digital Twin (High Speed) ---
                 with chart_slot.container():
-                    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08, row_heights=[0.7, 0.3])
-                    fig.add_trace(go.Scatter(y=[d[0] for d in data_log], name="Actual", line=dict(color='#00d1ff', width=1.5)), row=1, col=1)
-                    fig.add_trace(go.Scatter(y=[r[0] for r in recon_log], name="AI Expected", line=dict(color='rgba(255,255,255,0.3)', dash='dot')), row=1, col=1)
-                    fig.add_trace(go.Scatter(y=error_log, name="Risk", fill='tozeroy', line=dict(color='#ff4b4b')), row=2, col=1)
-                    fig.add_hline(y=threshold, line_dash="dash", line_color="red", row=2, col=1)
-                    fig.update_layout(height=450, template="plotly_dark", margin=dict(t=5, b=5, l=10, r=10), showlegend=False)
-                    st.plotly_chart(fig, use_container_width=True, key=f"t1_{t}")
+                    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1)
+                    fig.add_trace(go.Scatter(y=[d[0] for d in data_log[-300:]], name="Actual", line=dict(color='#00d1ff')), row=1, col=1)
+                    fig.add_trace(go.Scatter(y=[r[0] for r in recon_log[-300:]], name="AI", line=dict(color='white', dash='dot', width=1)), row=1, col=1)
+                    fig.add_trace(go.Scatter(y=error_log[-300:], name="Risk", fill='tozeroy', line=dict(color='#ff4b4b')), row=2, col=1)
+                    fig.update_layout(height=400, template="plotly_dark", showlegend=False, margin=dict(t=5, b=5))
+                    st.plotly_chart(fig, use_container_width=True, key=f"twin_{t}")
 
-                # --- Tab 2: Spectral & Matrix (Throttled) ---
+                # --- Throttled Spectral Analysis ---
                 if t % UPDATE_INTERVAL == 0:
                     with spectral_slot.container():
                         m1, m2 = st.columns(2)
-                        
-                        # Calculate FFT for Vibration
-                        # We take the last 128 points for a clean spectrum
+                        # FFT
                         n_fft = 128
                         if len(data_log) > n_fft:
-                            v_series = [d[0] for d in data_log[-n_fft:]]
-                            yf = fft(v_series)
+                            yf = fft([d[0] for d in data_log[-n_fft:]])
                             xf = fftfreq(n_fft, 1)[:n_fft//2]
-                            mag = 2.0/n_fft * np.abs(yf[0:n_fft//2])
-                            
-                            fig_fft = go.Figure(data=go.Bar(x=xf, y=mag, marker_color='#00ff9d'))
-                            fig_fft.update_layout(height=350, title="FFT (Frequency Spectrum)", template="plotly_dark", 
-                                                 xaxis_title="Frequency", yaxis_title="Magnitude", margin=dict(t=40, b=10))
+                            fig_fft = go.Figure(data=go.Bar(x=xf, y=2.0/n_fft * np.abs(yf[0:n_fft//2]), marker_color='#00ff9d'))
+                            fig_fft.update_layout(height=300, title="Live FFT Spectrum", template="plotly_dark")
                             m1.plotly_chart(fig_fft, use_container_width=True, key=f"fft_{t}")
                         
-                        # Phase Space Scatter
-                        df_p = pd.DataFrame(data_log[-300:], columns=["V", "T"])
-                        fig_p = px.scatter(df_p, x="V", y="T", color_discrete_sequence=['#ffcc00'])
-                        fig_p.update_layout(height=350, title="Phase-Space Coupling", template="plotly_dark", margin=dict(t=40, b=10))
+                        # Phase Space
+                        fig_p = px.scatter(pd.DataFrame(data_log[-200:], columns=["V","T"]), x="V", y="T")
+                        fig_p.update_layout(height=300, title="Phase-Space Drift", template="plotly_dark")
                         m2.plotly_chart(fig_p, use_container_width=True, key=f"phase_{t}")
 
+                # --- LOGGING ENGINE (Fix) ---
                 if loss > threshold:
-                    st.session_state.maintenance_logs.append({"Time": datetime.now().strftime("%H:%M:%S"), "Anomaly": f"{loss:.1f}%"})
+                    # Append directly to session state
+                    new_log = {"Time": datetime.now().strftime("%H:%M:%S"), "Anomaly": f"{loss:.1f}%", "Status": "CRITICAL"}
+                    # Only log if it's a new unique timestamp or significant change
+                    if not st.session_state.maintenance_logs or st.session_state.maintenance_logs[-1]["Time"] != new_log["Time"]:
+                        st.session_state.maintenance_logs.append(new_log)
             
-            time.sleep(0.04)
+            time.sleep(0.01)
     else:
-        st.info("System Standby. Click 'Start Ingestion' to begin AI Digital Twin monitoring.")
+        st.info("System Standby. Use the sidebar to start the AI ingestion engine.")
 
 # ---------------------------------
-# 4. Maintenance Log
+# 4. Page Routing
 # ---------------------------------
+if page == "🚀 Live Monitor":
+    run_live_monitor()
+
 elif page == "📋 Maintenance Log":
-    st.header("Incident Archive")
+    st.header("System Incident Archive")
+    st.markdown("This log updates in real-time as the AI detects drift.")
+    
     if st.session_state.maintenance_logs:
-        st.dataframe(pd.DataFrame(st.session_state.maintenance_logs).iloc[::-1], use_container_width=True)
+        df = pd.DataFrame(st.session_state.maintenance_logs)
+        st.error(f"Total Critical Events: {len(df)}")
+        st.dataframe(df.iloc[::-1], use_container_width=True) # Newest first
+        
+        # Download link
+        csv = df.to_csv(index=False).encode('utf-8')
+        st.download_button("📥 Export CSV Report", data=csv, file_name="maintenance_log.csv", mime="text/csv")
     else:
-        st.success("No anomalies detected in the current cycle.")
+        st.success("No anomalies detected. System health is optimal.")
