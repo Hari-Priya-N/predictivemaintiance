@@ -1,4 +1,4 @@
- ⚙️ SentinAI Pro v3.1: Industrial Digital Twin
+ ⚙️ SentinAI Pro v3.1: Industrial Digital Twin - https://predictivemaintiance-pm3pbjvve497tzrjlczwad.streamlit.app/#spatial-anomaly-distribution
 
 SentinAI Pro is a high-fidelity predictive maintenance dashboard that utilizes Deep Learning to monitor industrial assets. By combining LSTM Autoencoders with Spectral Analysis (FFT), it identifies mechanical "drift" and predicts the Remaining Useful Life (RUL) of machinery before a catastrophic breakdown occurs.
 
